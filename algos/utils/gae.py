@@ -7,7 +7,7 @@ def calculate_gae(
     next_values: torch.tensor,
     gamma: float,
     lam: float,
-):
+) -> torch.tensor:
     """
     Computes the Generalized Advantage Estimation. Uses the following formula:
     A_t = SUM_{l=0}^{inf}(gamma * lambda)^l * d_{t+l} where d_t = r_t + gamma * V(s_{t+1}) - V(s_t)
@@ -19,6 +19,9 @@ def calculate_gae(
         next_values (torch.tensor): (Nx1) tensor of values
         gamma (float): discount factor
         lam (float): lambda hyperparameter
+
+    Returns:
+        adv (torch.tensor): the advantages
     """
     td_errors = rewards + gamma * next_values - values
     adv = torch.zeros_like(rewards)

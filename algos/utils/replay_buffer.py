@@ -5,7 +5,7 @@ from torch import tensor
 
 class ReplayBuffer:
     """
-    Replay buffer class for a DQN agent
+    Replay buffer class
 
     Attributes:
         capacity (int): capacity of the replay buffer
@@ -16,12 +16,12 @@ class ReplayBuffer:
         self.capacity = capacity
         self.buffer = deque(maxlen=capacity)
 
-    def append(self, experience: tuple[tensor, int, float, tensor, bool]) -> None:
+    def append(self, experience: tuple) -> None:
         """
         Adds an element to the replay buffer
 
         Args:
-            experience (tuple): a tuple containing the state, action, reward, next state, and if the episode has terminated/truncated
+            experience (tuple): a tuple containing the buffer info
 
         Returns:
             None

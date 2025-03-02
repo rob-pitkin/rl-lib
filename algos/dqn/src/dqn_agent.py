@@ -2,7 +2,7 @@ import gymnasium as gym
 from network import QNetwork, DuelingQNetwork
 import random
 import torch
-from replay_buffer import ReplayBuffer
+from algos.utils import ReplayBuffer
 
 
 class DQN:
