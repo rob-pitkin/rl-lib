@@ -37,7 +37,7 @@ class ReplayBuffer:
         """
         return random.sample(self.buffer, batch_size)
 
-    def getSize(self) -> int:
+    def get_size(self) -> int:
         """
         Get the current size of the replay buffer
 
@@ -47,3 +47,14 @@ class ReplayBuffer:
             int: the size of the replay buffer
         """
         return len(self.buffer)
+
+    def clear(self) -> None:
+        """
+        Clear the replay buffer
+
+        Args:
+            None
+        Returns:
+            None
+        """
+        self.buffer.clear()

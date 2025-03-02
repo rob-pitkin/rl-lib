@@ -97,7 +97,7 @@ class DQN:
                 state = next_state
 
                 # check if we should sample from the replay buffer to update our network
-                if self.replay_buffer.getSize() > 64:
+                if self.replay_buffer.get_size() > 64:
                     batch = self.replay_buffer.sample(64)
                     (
                         batch_states,
