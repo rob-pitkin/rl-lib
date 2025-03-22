@@ -70,17 +70,6 @@ class PPO:
         self.value_optimizer = torch.optim.Adam(
             self.value_net.parameters(), lr=self.value_lr
         )
-        if self.env.action_space.shape[0] != self.policy_net.output_dim:
-            raise ValueError(
-                f"Environment action space: {self.env.action_space.shape} incompatible with policy net output_dim: {self.policy_net.output_dim}"
-            )
-        if (
-            self.env.observation_space.shape[0] != self.policy_net.input_dim
-            or self.env.observation_space.shape[0] != self.value_net.input_dim
-        ):
-            raise ValueError(
-                f"Environment observation space: {self.env.observation_space} incompatible with policy net input: {self.policy_net.input_dim} or value net input: {self.value_net.input_dim}"
-            )
 
     def update_params(
         self,
@@ -101,8 +90,8 @@ class PPO:
             # compute the PPO objective fn
             actor_loss = -torch.min(
                 prob_ratio * advantages,
-                torch.clip(ratio, 1.0 - epsilon, 1.0 + epsilon) * advantages,
-            )
+                torch.clip(prob_ratio, 1.0 - epsilon, 1.0 + epsilon) * advantages,
+            ).mean()  # Take mean across batch to get scalar loss
 
             # Compute the state values and value loss
             state_values = self.value_net(states)
@@ -126,7 +115,7 @@ class PPO:
         batch_size: int = 64,
     ):
         for _ in range(num_episodes):
-            collect_rollout()
+            self.collect_rollout()
             if self.buffer.get_size() >= batch_size:
                 batch = self.buffer.sample(batch_size)
                 (
@@ -138,6 +127,13 @@ class PPO:
                     state_values,
                     next_state_values,
                 ) = zip(*batch)
+                # convert to tensors
+                states = torch.stack([s.squeeze(0) for s in states])
+                actions = torch.stack(actions)
+                rewards = torch.stack(rewards)
+                log_probs = torch.stack(log_probs)
+                state_values = torch.stack(state_values)
+                next_state_values = torch.stack(next_state_values)
                 advantages, returns = calculate_advantages_and_returns(
                     rewards, state_values, next_state_values, self.gamma, self.lam
                 )
@@ -158,7 +154,7 @@ class PPO:
     def collect_rollout(self):
         with torch.no_grad():
             obs, _ = self.env.reset()
-            state = torch.tensor(obs)
+            state = torch.tensor(obs).unsqueeze(0)
             episode_done = False
             while not episode_done:
                 # Pick the action from the policy
@@ -167,29 +163,33 @@ class PPO:
                 action = dist.sample()
 
                 # get the log prob of the action
-                log_prob = torch.log_prob(action)
+                log_prob = dist.log_prob(action)
 
                 # get the value of the state
-                state_value = self.value_net(state)
+                state_value = self.value_net(state).squeeze(0)
 
                 # take the next step in the env
-                next_state, reward, terminated, truncated, _ = self.env.step(action)
-                next_state = torch.tensor(next_state)
+                next_state, reward, terminated, truncated, _ = self.env.step(
+                    action.item()
+                )
+                next_state = torch.tensor(next_state).unsqueeze(0)
                 episode_done = terminated or truncated
                 next_state_value = (
-                    self.value_net(next_state) if not episode_done else 0.0
+                    self.value_net(next_state).squeeze(0)
+                    if not episode_done
+                    else torch.tensor([0.0], dtype=torch.float32)
                 )
 
                 experience = (
                     state,
                     action,
-                    reward,
-                    done,
+                    torch.tensor(reward, dtype=torch.float32).unsqueeze(0),
+                    episode_done,
                     log_prob,
                     state_value,
                     next_state_value,
                 )
-                self.replay_buffer.append(experience)
+                self.buffer.append(experience)
                 state = next_state
 
     def load_model(self, policy_filepath: str, value_filepath: str) -> None:

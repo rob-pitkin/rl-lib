@@ -57,8 +57,8 @@ def calculate_advantages_and_returns(
         lam (float): lambda hyperparameter
 
     Returns:
-        adv (torch.tensor): the advantages
-        returns (torch.tensor): the returns
+        adv (torch.tensor): (Nx1) tensor of advantages
+        returns (torch.tensor): (Nx1) tensor of returns
     """
     td_errors = rewards + gamma * next_values - values
     adv = torch.zeros_like(rewards)

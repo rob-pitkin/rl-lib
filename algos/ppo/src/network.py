@@ -21,6 +21,10 @@ class PPONetwork(nn.Module):
         hidden_dims: list[int] = None,
     ):
         super(PPONetwork, self).__init__()
+        self.input_dim = input_dim
+        self.output_dim = output_dim
+        self.activation_fn = activation_fn
+        self.hidden_dims = hidden_dims
         if (
             input_dim < 1
             or (hidden_dims and any([h < 1 for h in hidden_dims]))
@@ -71,7 +75,7 @@ class ValueNetwork(nn.Module):
     def __init__(
         self, input_dim: int, activation_fn: str, hidden_dims: list[int] = None
     ):
-        super(PPONetwork, self).__init__()
+        super(ValueNetwork, self).__init__()
         if input_dim < 1 or (hidden_dims and any([h < 1 for h in hidden_dims])):
             raise ValueError("All dimension values must be >= 1")
         if activation_fn != "relu" and activation_fn != "tanh":
