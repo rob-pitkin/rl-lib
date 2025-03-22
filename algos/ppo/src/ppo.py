@@ -114,7 +114,9 @@ class PPO:
         num_episodes: int = 100,
         batch_size: int = 64,
     ):
-        for _ in range(num_episodes):
+        for i in range(num_episodes):
+            if i % 100 == 0:
+                print(f"Episode {i} of {num_episodes}")
             self.collect_rollout()
             if self.buffer.get_size() >= batch_size:
                 batch = self.buffer.sample(batch_size)
@@ -230,12 +232,14 @@ class PPO:
         self.policy_net.eval()
         eval_env = gym.make(self.env_id, render_mode="human")
         avg_reward = 0
-        for i in range(num_episodes):
+        for _ in range(num_episodes):
             reward = 0
             obs, _ = eval_env.reset()
             done = False
             while not done:
-                action = torch.argmax(self.policy_net(torch.FloatTensor(obs))).item()
+                action = torch.argmax(
+                    self.policy_net(torch.FloatTensor(obs).unsqueeze(0))
+                ).item()
                 obs, r, terminated, truncated, _ = eval_env.step(action)
                 reward += r
                 done = terminated or truncated

@@ -29,3 +29,10 @@ For ease of use and compatibility testing, scripts are provided in `./algos/scri
 # ex: running DQN, from the root of this repo
 ./algos/scripts/run_dqn.sh
 ```
+
+## Troubleshooting
+If you run into issues regarding `no module named 'algos'`, try running the following command:
+```
+export PYTHONPATH=$PYTHONPATH:$(pwd)
+```
+from the root of this repo.

@@ -15,7 +15,7 @@ def main():
         batch_size=256,
     )
 
-    ppo_agent.load_model("algos/dqn/src/ppo_policy.pt", "algos/dqn/src/ppo_value.pt")
+    ppo_agent.load_model("algos/ppo/src/ppo_policy.pt", "algos/ppo/src/ppo_value.pt")
     ppo_agent.eval_model(1)
 
 
