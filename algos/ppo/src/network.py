@@ -9,6 +9,7 @@ class PPONetwork(nn.Module):
     Attributes:
         input_dim (int): input size of the network, typically the size of the observation space
         output_dim (int): output size of the network, typically the size of the action space
+        activation_fn (str): activation function to use between hidden layers (can be "relu" or "tanh")
         hidden_dims (List): list of hidden layer sizes from layer 0 to n
     """
 
@@ -56,35 +57,26 @@ class PPONetwork(nn.Module):
         """
         return self.fc(x)
 
+
 class ValueNetwork(nn.Module):
- """
+    """
     Feedforward MLP for the PPO Value network (critic)
 
     Attributes:
         input_dim (int): input size of the network, typically the size of the observation space
-        output_dim (int): output size of the network, typically the size of the action space
+        activation_fn (str): activation function to use between hidden layers (can be "relu" or "tanh")
         hidden_dims (List): list of hidden layer sizes from layer 0 to n
     """
 
     def __init__(
-        self,
-        input_dim: int,
-        activation_fn: str,
-        hidden_dims: list[int] = None,
+        self, input_dim: int, activation_fn: str, hidden_dims: list[int] = None
     ):
         super(PPONetwork, self).__init__()
-        if (
-            input_dim < 1
-            or (hidden_dims and any([h < 1 for h in hidden_dims]))
-        ):
+        if input_dim < 1 or (hidden_dims and any([h < 1 for h in hidden_dims])):
             raise ValueError("All dimension values must be >= 1")
         if activation_fn != "relu" and activation_fn != "tanh":
             raise ValueError("Supported activation functions: 'relu', 'tanh'")
-        layer_sizes = (
-            [input_dim] + hidden_dims + [1]
-            if hidden_dims
-            else [input_dim, 1]
-        )
+        layer_sizes = [input_dim] + hidden_dims + [1] if hidden_dims else [input_dim, 1]
 
         self.layers = []
         for i in range(len(layer_sizes) - 1):
