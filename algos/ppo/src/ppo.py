@@ -65,7 +65,11 @@ class PPO:
         self.lam = lam
         self.epochs = epochs
         self.env_id = env_id
-        self.env = gym.make(self.env_id)
+        self.env = (
+            gym.make(self.env_id)
+            if not cnn_net
+            else gym.make(self.env_id, continuous=False)
+        )
         self.policy_lr = policy_lr
         self.value_lr = value_lr
         self.policy_optimizer, self.value_optimizer, self.cnn_optimizer = (
@@ -99,16 +103,19 @@ class PPO:
         """ """
         # state shape assertions
         torch._assert(
-            states.dim() == 4
-        ), f"Expected states to be 4D tensors, got {states.shape}"
+            states.dim() == 4,
+            message=f"Expected states to be 4D tensors, got {states.shape}",
+        )
         torch._assert(
-            states.shape[1] == 3,
-        ), f"Expected 3 input channels for each state, got {states.shape[1]}"
+            states.shape[3] == 3,
+            message=f"Expected 3 input channels for each state, got {states.shape[1]}",
+        )
 
         # action shape assertions
         torch._assert(
-            actions.dim() == 2
-        ), f"Expected actions to be 2D tensors, got {actions.shape}"
+            actions.dim() == 2,
+            f"Expected actions to be 2D tensors, got {actions.shape}",
+        )
 
         for _ in range(epochs):
             # Compute a forward pass of the states, get the action_probs and state values
@@ -175,8 +182,9 @@ class PPO:
 
     def train(
         self,
-        policy_save_path: str,
-        value_save_path: str,
+        policy_save_path: str = "",
+        value_save_path: str = "",
+        cnn_save_path: str = "",
         num_episodes: int = 100,
         batch_size: int = 64,
     ):
@@ -210,17 +218,31 @@ class PPO:
                 )
 
                 # perform PPO update
-                self.update_params_1d(
-                    states,
-                    actions,
-                    log_probs,
-                    advantages,
-                    returns,
-                    self.epsilon,
-                    self.epochs,
-                )
+                if self.cnn_net:
+                    self.update_params_2d(
+                        states,
+                        actions,
+                        log_probs,
+                        advantages,
+                        returns,
+                        self.epsilon,
+                        self.epochs,
+                    )
+                else:
+                    self.update_params_1d(
+                        states,
+                        actions,
+                        log_probs,
+                        advantages,
+                        returns,
+                        self.epsilon,
+                        self.epochs,
+                    )
                 self.buffer.clear()
-        self.save_model(policy_save_path, value_save_path)
+        if self.cnn_net:
+            self.save_model_2d(cnn_save_path)
+        else:
+            self.save_model(policy_save_path, value_save_path)
 
     def collect_rollout_1d(self):
         with torch.no_grad():
@@ -266,7 +288,7 @@ class PPO:
     def collect_rollout_2d(self):
         with torch.no_grad():
             obs, _ = self.env.reset()
-            state = torch.tensor(obs).unsqueeze(0)
+            state = torch.tensor(obs, dtype=torch.float32).unsqueeze(0)
             episode_done = False
             while not episode_done:
                 # Pick the action from the policy
@@ -281,10 +303,10 @@ class PPO:
                 next_state, reward, terminated, truncated, _ = self.env.step(
                     action.item()
                 )
-                next_state = torch.tensor(next_state).unsqueeze(0)
+                next_state = torch.tensor(next_state, dtype=torch.float32).unsqueeze(0)
                 episode_done = terminated or truncated
-                _, next_state_value = (
-                    self.cnn_net(next_state).squeeze(0)
+                next_state_value = (
+                    self.cnn_net(next_state)[1].squeeze(0)
                     if not episode_done
                     else torch.tensor([0.0], dtype=torch.float32)
                 )
@@ -295,7 +317,7 @@ class PPO:
                     torch.tensor(reward, dtype=torch.float32).unsqueeze(0),
                     episode_done,
                     log_prob,
-                    state_value,
+                    state_value.squeeze(0),
                     next_state_value,
                 )
                 self.buffer.append(experience)
@@ -314,6 +336,17 @@ class PPO:
         self.policy_net = torch.load(policy_filepath, weights_only=False)
         self.value_net = torch.load(value_filepath, weights_only=False)
 
+    def load_model_2d(self, cnn_filepath: str) -> None:
+        """
+        Loads the cnn from a filepath
+
+        Args:
+            cnn_filepath (str): filepath of the cnn to load from
+        Returns:
+            None
+        """
+        self.cnn_net = torch.load(cnn_filepath, weights_only=False)
+
     def save_model(self, policy_filepath: str, value_filepath: str) -> None:
         """
         Saves the policy and value networks to respective filepaths
@@ -327,6 +360,17 @@ class PPO:
         torch.save(self.policy_net, policy_filepath)
         torch.save(self.value_net, value_filepath)
 
+    def save_model_2d(self, cnn_filepath: str) -> None:
+        """
+        Saves the cnn to a filepath
+
+        Args:
+            cnn_filepath (str): path to save the cnn to
+        Returns:
+            None
+        """
+        torch.save(self.cnn_net, cnn_filepath)
+
     def eval_model(self, num_episodes: int) -> None:
         """
         Evaluates the model with human rendered episodes
@@ -336,7 +380,10 @@ class PPO:
         Returns:
             None
         """
-        self.policy_net.eval()
+        if self.cnn_net:
+            self.cnn_net.eval()
+        else:
+            self.policy_net.eval()
         eval_env = gym.make(self.env_id, render_mode="human")
         avg_reward = 0
         for _ in range(num_episodes):
@@ -344,7 +391,10 @@ class PPO:
             obs, _ = eval_env.reset()
             done = False
             while not done:
-                action_logits = self.policy_net(torch.FloatTensor(obs).unsqueeze(0))
+                if self.cnn_net:
+                    action_logits, _ = self.cnn_net(torch.FloatTensor(obs).unsqueeze(0))
+                else:
+                    action_logits = self.policy_net(torch.FloatTensor(obs).unsqueeze(0))
                 action = torch.argmax(action_logits, dim=-1).item()
                 obs, r, terminated, truncated, _ = eval_env.step(action)
                 reward += r

@@ -122,9 +122,9 @@ class PPOCNNetwork(nn.Module):
         if activation_fn not in ("relu", "tanh"):
             raise ValueError("Supported activation functions: 'relu', 'tanh'")
         self.activation_fn = (
-            torch.functional.ReLU()
+            torch.nn.functional.relu
             if activation_fn == "relu"
-            else torch.functional.Tanh()
+            else torch.nn.functional.tanh
         )
         # go from (3, 96, 96) to (16, 48, 48)
         self.conv1 = torch.nn.Conv2d(
@@ -182,12 +182,14 @@ class PPOCNNetwork(nn.Module):
         Returns:
             tuple(torch.tensor, torch.tensor): the policy head output and the value head output
         """
+        x = x.permute(0, 3, 1, 2)
         x = self.conv1(x)
         x = self.activation_fn(x)
         x = self.conv2(x)
         x = self.activation_fn(x)
         x = self.conv3(x)
         x = self.activation_fn(x)
+        x = torch.flatten(x, start_dim=1)
         x = self.fc(x)
         action_logits = self.policy_head(x)
         value = self.value_head(x)
