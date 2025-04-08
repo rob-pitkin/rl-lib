@@ -7,7 +7,12 @@ import torch.optim
 def main():
     policy_network = PPONetwork(8, 4, "relu", [64])
     value_network = ValueNetwork(8, "relu", [64])
-    ppo_agent = PPO(policy_network, value_network, 256, "LunarLander-v2")
+    ppo_agent = PPO(
+        env_id="LunarLander-v2",
+        buffer_capacity=256,
+        policy_net=policy_network,
+        value_net=value_network,
+    )
     ppo_agent.train(
         policy_save_path="algos/ppo/src/ppo_policy.pt",
         value_save_path="algos/ppo/src/ppo_value.pt",

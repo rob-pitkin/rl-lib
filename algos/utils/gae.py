@@ -60,15 +60,16 @@ def calculate_advantages_and_returns(
         adv (torch.tensor): (Nx1) tensor of advantages
         returns (torch.tensor): (Nx1) tensor of returns
     """
-    td_errors = rewards + gamma * next_values - values
-    adv = torch.zeros_like(rewards)
-    returns = torch.zeros_like(rewards)
-    gae = 0
-    for t in reversed(range(len(td_errors))):
-        # in the t = N case, gae = td_errors[N]
-        # in the t = N - 1 case, gae = gamma * lam * td_errors[N] + td_errors[N - 1]
-        # in the t = N - 2 case, gae = gamma * lam * (gamma * lam * td_errors[N] + td_errors[N - 1]) + td_errors[N - 2]
-        gae = gae * gamma * lam + td_errors[t]
-        adv[t] = gae
-        returns[t] = adv[t] + values[t]
-    return adv, returns
+    with torch.no_grad():
+        td_errors = rewards + gamma * next_values - values
+        adv = torch.zeros_like(rewards)
+        returns = torch.zeros_like(rewards)
+        gae = 0
+        for t in reversed(range(len(td_errors))):
+            # in the t = N case, gae = td_errors[N]
+            # in the t = N - 1 case, gae = gamma * lam * td_errors[N] + td_errors[N - 1]
+            # in the t = N - 2 case, gae = gamma * lam * (gamma * lam * td_errors[N] + td_errors[N - 1]) + td_errors[N - 2]
+            gae = gae * gamma * lam + td_errors[t]
+            adv[t] = gae
+            returns[t] = adv[t] + values[t]
+        return adv, returns
