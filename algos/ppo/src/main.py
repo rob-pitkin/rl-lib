@@ -8,7 +8,7 @@ def main():
     policy_network = PPONetwork(8, 4, "relu", [64])
     value_network = ValueNetwork(8, "relu", [64])
     ppo_agent = PPO(
-        env_id="LunarLander-v2",
+        env_id="LunarLander-v3",
         buffer_capacity=256,
         policy_net=policy_network,
         value_net=value_network,

@@ -4,7 +4,7 @@ import torch.optim
 
 
 def main():
-    dqn = DQN(8, 4, "relu", "LunarLander-v2", [32], network_type="dueling")
+    dqn = DQN(8, 4, "relu", "LunarLander-v3", [32], network_type="dueling")
     dqn.train(5000, save_path="algos/dqn/src/dqn.pt")
 
     dqn.loadModel("algos/dqn/src/dqn.pt")
