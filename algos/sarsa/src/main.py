@@ -15,7 +15,7 @@ def main():
         map_name="4x4",
         render_mode="rgb_array",
         is_slippery=True,
-        success_rate=1.0 / 3.0,
+        success_rate=3.0 / 4.0,
         reward_schedule=(1, 0, 0),
     )
     num_states = env.observation_space.n
