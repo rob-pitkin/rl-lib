@@ -2,9 +2,9 @@ import gymnasium
 import numpy as np
 
 
-class SarsaAgent:
+class QLearningAgent:
     """
-    Implementation of the SARSA algorithm for MDPs with epsilon-greedy exploration.
+    Implementation of the Q-Learning algorithm for MDPs with epsilon-greedy exploration.
     Algorithm pseudocode from "Multi-agent Reinforcement Learning" by Albrecht, et al.
     """
 
@@ -14,34 +14,37 @@ class SarsaAgent:
         num_actions: int,
         epsilon: float = 0.1,
         alpha: float = 0.1,
-        gamma: float = 0.9,
+        gamma: float = 0.95,
     ):
         """
-        Initialize the SARSA agent.
+        Initialize the Q-Learning agent.
 
         Args:
-            num_states (int): Number of states in the environment.
-            num_actions (int): Number of actions in the environment.
-            epsilon (float): Exploration rate.
-            alpha (float): Learning rate.
-            gamma (float): Discount factor.
+            num_states (int): The number of states in the environment.
+            num_actions (int): The number of actions available in the environment.
+            epsilon (float): The exploration rate.
+            alpha (float): The learning rate.
+            gamma (float): The discount factor.
+
+        Returns:
+            None
         """
+        self.num_states: int = num_states
+        self.num_actions: int = num_actions
         self.epsilon: float = epsilon
         self.alpha: float = alpha
         self.gamma: float = gamma
-        self.num_states: int = num_states
-        self.num_actions: int = num_actions
         self.q: np.ndarray = np.zeros((num_states, num_actions))
 
     def select_action(self, state: int) -> int:
         """
-        Selects an action based on the epsilon-greedy policy.
+        Select an action using epsilon-greedy exploration.
 
         Args:
-            state (int): Current state.
+            state (int): The current state.
 
         Returns:
-            int: Selected action.
+            int: The selected action.
         """
         if np.random.rand() < self.epsilon:
             return np.random.randint(self.num_actions)
@@ -52,7 +55,7 @@ class SarsaAgent:
         self, state: int, action: int, reward: float, next_state: int, next_action: int
     ):
         """
-        Updates Q-values using the SARSA update rule.
+        Updates Q-values using the Q-learning update rule.
 
         Args:
             state (int): Current state.
@@ -65,12 +68,12 @@ class SarsaAgent:
             None
         """
         prev_q = self.q[state, action]
-        td_target = reward + self.gamma * self.q[next_state, next_action]
+        td_target = reward + self.gamma * np.max(self.q[next_state])
         self.q[state, action] += self.alpha * (td_target - prev_q)
 
     def train(self, env: gymnasium.Env, num_episodes: int):
         """
-        Train a SARSA agent for "num_episodes".
+        Train a Q-learning agent for "num_episodes".
 
         Args:
             env (gymnasium.Env): Environment to train on.

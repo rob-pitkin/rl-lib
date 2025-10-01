@@ -1,5 +1,5 @@
 import gymnasium
-from sarsa import SarsaAgent
+from q_learning import QLearningAgent
 
 
 def main():
@@ -20,9 +20,9 @@ def main():
     )
     num_states = env.observation_space.n
     num_actions = env.action_space.n
-    agent = SarsaAgent(num_states, num_actions, gamma=0.99, alpha=0.1, epsilon=0.1)
+    agent = QLearningAgent(num_states, num_actions, gamma=0.99, alpha=0.1, epsilon=0.1)
     agent.train(env, num_episodes=100000)
-    agent.save_q_table("algos/sarsa/q_table.txt")
+    agent.save_q_table("algos/q-learning/q_table.txt")
 
 
 if __name__ == "__main__":
