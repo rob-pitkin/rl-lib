@@ -12,6 +12,9 @@ def main():
         buffer_capacity=256,
         policy_net=policy_network,
         value_net=value_network,
+        epochs=4,
+        policy_lr=3e-4,
+        value_lr=3e-4,
     )
     ppo_agent.train(
         policy_save_path="algos/ppo/src/ppo_policy.pt",

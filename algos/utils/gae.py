@@ -73,8 +73,7 @@ def calculate_advantages_and_returns(
             # in the t = N case, gae = td_errors[N]
             # in the t = N - 1 case, gae = gamma * lam * td_errors[N] + td_errors[N - 1]
             # in the t = N - 2 case, gae = gamma * lam * (gamma * lam * td_errors[N] + td_errors[N - 1]) + td_errors[N - 2]
-            gae = gae * lam * (1 - dones[t])
-            gae = gae * gamma + td_errors[t]
+            gae = gae * gamma * lam * (1 - dones[t]) + td_errors[t]
             adv[t] = gae
             returns[t] = adv[t] + values[t]
         return adv, returns

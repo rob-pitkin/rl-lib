@@ -126,15 +126,16 @@ class PPO:
             dist = torch.distributions.Categorical(logits=action_logits)
             new_log_probs = dist.log_prob(actions)
             # use log rules: log(a) - log(b) = log(a/b), exp(log(a/b)) = a/b
-            prob_ratio = torch.exp(new_log_probs - prev_log_probs)
+            prob_ratio = torch.exp(new_log_probs - prev_log_probs.detach())
             # compute the PPO objective fn
             actor_loss = -torch.min(
-                prob_ratio * advantages,
-                torch.clip(prob_ratio, 1.0 - epsilon, 1.0 + epsilon) * advantages,
+                prob_ratio * advantages.detach(),
+                torch.clip(prob_ratio, 1.0 - epsilon, 1.0 + epsilon)
+                * advantages.detach(),
             ).mean()  # Take mean across batch to get scalar loss
 
             # Compute the value loss
-            critic_loss = torch.nn.functional.mse_loss(state_values, returns)
+            critic_loss = torch.nn.functional.mse_loss(state_values, returns.detach())
 
             # backprop the loss
             self.cnn_optimizer.zero_grad()
@@ -162,8 +163,9 @@ class PPO:
             prob_ratio = torch.exp(new_log_probs - prev_log_probs)
             # compute the PPO objective fn
             actor_loss = -torch.min(
-                prob_ratio * advantages,
-                torch.clip(prob_ratio, 1.0 - epsilon, 1.0 + epsilon) * advantages,
+                prob_ratio * advantages.detach(),
+                torch.clip(prob_ratio, 1.0 - epsilon, 1.0 + epsilon)
+                * advantages.detach(),
             ).mean()  # Take mean across batch to get scalar loss
 
             # Compute the state values and value loss
@@ -217,8 +219,8 @@ class PPO:
                 next_state_values = torch.stack(next_state_values)
                 advantages, returns = calculate_advantages_and_returns(
                     rewards,
-                    state_values,
-                    next_state_values,
+                    state_values.detach(),
+                    next_state_values.detach(),
                     dones,
                     self.gamma,
                     self.lam,
@@ -229,7 +231,7 @@ class PPO:
                     self.update_params_2d(
                         states,
                         actions,
-                        log_probs,
+                        log_probs.detach(),
                         advantages,
                         returns,
                         self.epsilon,
@@ -239,7 +241,7 @@ class PPO:
                     self.update_params_1d(
                         states,
                         actions,
-                        log_probs,
+                        log_probs.detach(),
                         advantages,
                         returns,
                         self.epsilon,
@@ -284,7 +286,7 @@ class PPO:
                     state,
                     action,
                     torch.tensor(reward, dtype=torch.float32).unsqueeze(0),
-                    episode_done,
+                    torch.tensor(episode_done, dtype=torch.float32).unsqueeze(0),
                     log_prob,
                     state_value,
                     next_state_value,
@@ -322,7 +324,7 @@ class PPO:
                     state,
                     action,
                     torch.tensor(reward, dtype=torch.float32).unsqueeze(0),
-                    episode_done,
+                    torch.tensor(episode_done, dtype=torch.float32).unsqueeze(0),
                     log_prob,
                     state_value.squeeze(0),
                     next_state_value,
