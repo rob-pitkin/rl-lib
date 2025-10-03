@@ -196,7 +196,8 @@ class PPO:
             else:
                 self.collect_rollout_1d()
             if self.buffer.get_size() >= self.buffer.capacity:
-                batch = self.buffer.sample(batch_size)
+                batch = self.buffer.buffer
+                # zip batch into individual parts
                 (
                     states,
                     actions,
@@ -210,11 +211,17 @@ class PPO:
                 states = torch.stack([s.squeeze(0) for s in states])
                 actions = torch.stack(actions)
                 rewards = torch.stack(rewards)
+                dones = torch.stack(dones)
                 log_probs = torch.stack(log_probs)
                 state_values = torch.stack(state_values)
                 next_state_values = torch.stack(next_state_values)
                 advantages, returns = calculate_advantages_and_returns(
-                    rewards, state_values, next_state_values, self.gamma, self.lam
+                    rewards,
+                    state_values,
+                    next_state_values,
+                    dones,
+                    self.gamma,
+                    self.lam,
                 )
 
                 # perform PPO update
