@@ -3,7 +3,7 @@ import gymnasium
 import torch
 import numpy as np
 from network import ActorNetwork, CriticNetwork
-from utils import ReplayBuffer, calculate_advantages_and_returns
+from algos.utils import ReplayBuffer, calculate_advantages_and_returns
 
 
 class AdvantageActorCriticAgent:
@@ -64,7 +64,8 @@ class AdvantageActorCriticAgent:
             for step in range(self.update_frequency):
                 state_tensor = torch.tensor(state, dtype=torch.float32).unsqueeze(0)
                 # sample the action given the state (policy)
-                action_logits = self.actor(state_tensor)
+                with torch.no_grad():
+                    action_logits = self.actor(state_tensor)
                 dist = torch.distributions.Categorical(logits=action_logits)
                 action = dist.sample()
                 # get the log probability for the future update
@@ -78,10 +79,9 @@ class AdvantageActorCriticAgent:
                 self.rollout_buffer.append(
                     (
                         state,
-                        action,
+                        action.item(),
                         reward,
                         done,
-                        log_prob,
                     )
                 )
 
@@ -101,19 +101,19 @@ class AdvantageActorCriticAgent:
                 actions,
                 rewards,
                 dones,
-                log_probs,
             ) = zip(*batch)
 
             # convert to tensors
-            states = torch.tensor(states, dtype=torch.float32)
-            actions = torch.tensor(actions, dtype=torch.long)
-            rewards = torch.tensor(rewards, dtype=torch.float32)
-            dones = torch.tensor(dones, dtype=torch.float32)
-            log_probs = torch.tensor(log_probs, dtype=torch.float32)
+            states = torch.tensor(np.array(states), dtype=torch.float32)
+            actions = torch.tensor(actions, dtype=torch.long).unsqueeze(1)
+            rewards = torch.tensor(rewards, dtype=torch.float32).unsqueeze(1)
+            dones = torch.tensor(dones, dtype=torch.float32).unsqueeze(1)
 
-            # compute state values and next state values (batch)
             all_state_values = self.critic(
-                torch.cat([states, torch.tensor(state, dtype=torch.float32)], dim=0)
+                torch.cat(
+                    [states, torch.tensor(state, dtype=torch.float32).unsqueeze(0)],
+                    dim=0,
+                )
             )
             state_values = all_state_values[:-1]
             next_state_values = all_state_values[1:]
@@ -128,8 +128,12 @@ class AdvantageActorCriticAgent:
                 self.gae_lambda,
             )
 
+            current_logits = self.actor(states)
+            current_dist = torch.distributions.Categorical(logits=current_logits)
+            current_log_probs = current_dist.log_prob(actions)
+
             # compute the actor loss
-            actor_loss = -(log_probs * advantages.detach()).mean()
+            actor_loss = -torch.mean(current_log_probs * advantages.detach())
 
             # compute the critic loss
             critic_loss = torch.nn.functional.mse_loss(returns.detach(), state_values)
