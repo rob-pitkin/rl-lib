@@ -3,6 +3,7 @@ import torch
 import numpy as np
 from network import ActorNetwork, CriticNetwork
 from algos.utils import ReplayBuffer, calculate_advantages_and_returns
+import threading
 
 
 class AdvantageActorCriticAgent:
@@ -72,8 +73,6 @@ class AdvantageActorCriticAgent:
                     action_logits = self.actor(state_tensor)
                 dist = torch.distributions.Categorical(logits=action_logits)
                 action = dist.sample()
-                # get the log probability for the future update
-                log_prob = dist.log_prob(action).item()
 
                 # take a step in the environment
                 next_state, reward, done, truncated, _ = self.env.step(action.item())
@@ -150,6 +149,143 @@ class AdvantageActorCriticAgent:
             self.critic_optimizer.zero_grad()
             critic_loss.backward()
             self.critic_optimizer.step()
+
+            t += self.update_frequency
+
+    def worker_train(
+        self, num_steps: int, worker_id: int, lock: threading.Lock, env: gymnasium.Env
+    ) -> None:
+        # init a local actor and critic, as well as their optimizers
+        local_actor = ActorNetwork(
+            self.observation_dim,
+            self.action_dim,
+            self.net_arch["actor"] if "actor" in self.net_arch else [],
+        )
+        local_actor_optimizer = torch.optim.Adam(local_actor.parameters(), lr=self.lr)
+        local_critic = CriticNetwork(
+            self.observation_dim,
+            self.net_arch["critic"] if "critic" in self.net_arch else [],
+        )
+        local_critic_optimizer = torch.optim.Adam(local_critic.parameters(), lr=self.lr)
+        # set our current training step to 0
+        t = 0
+        # init the environment
+        state, _ = env.reset()
+        # while our current step is less than the number of training steps
+        while t < num_steps:
+            with lock:
+                local_actor.load_state_dict(self.actor.state_dict())
+                local_critic.load_state_dict(self.critic.state_dict())
+            if t % 10000 == 0:
+                print(f"Training step: {t}")
+            # reset the rollout buffer
+            rollout_buffer = ReplayBuffer(self.update_frequency)
+            # start collecting experiences
+            for step in range(self.update_frequency):
+                state_tensor = torch.tensor(state, dtype=torch.float32).unsqueeze(0)
+                # sample the action given the state (policy)
+                with torch.no_grad():
+                    action_logits = local_actor(state_tensor)
+                dist = torch.distributions.Categorical(logits=action_logits)
+                action = dist.sample()
+
+                # take a step in the environment
+                next_state, reward, done, truncated, _ = env.step(action.item())
+                done = done or truncated
+
+                # add the experience to the rollout buffer
+                rollout_buffer.append(
+                    (
+                        state,
+                        action.item(),
+                        reward,
+                        done,
+                    )
+                )
+
+                # update the current state
+                state = next_state
+
+                # if the episode is done or truncated, reset the environment
+                if done:
+                    state, _ = env.reset()
+
+            # update the actor and critic networks
+            batch = rollout_buffer.buffer
+
+            # parse out the components of the batch
+            (
+                states,
+                actions,
+                rewards,
+                dones,
+            ) = zip(*batch)
+
+            # convert to tensors
+            states = torch.tensor(np.array(states), dtype=torch.float32)
+            actions = torch.tensor(actions, dtype=torch.long)
+            rewards = torch.tensor(rewards, dtype=torch.float32).unsqueeze(1)
+            dones = torch.tensor(dones, dtype=torch.float32).unsqueeze(1)
+
+            all_state_values = local_critic(
+                torch.cat(
+                    [states, torch.tensor(state, dtype=torch.float32).unsqueeze(0)],
+                    dim=0,
+                )
+            )
+            state_values = all_state_values[:-1]
+            next_state_values = all_state_values[1:]
+
+            # compute advantages and returns for updates
+            advantages, returns = calculate_advantages_and_returns(
+                rewards,
+                state_values.detach(),
+                next_state_values.detach(),
+                dones,
+                self.gamma,
+                self.gae_lambda,
+            )
+
+            current_logits = local_actor(states)
+            current_dist = torch.distributions.Categorical(logits=current_logits)
+            current_log_probs = current_dist.log_prob(actions)
+
+            # compute the actor loss
+            actor_loss = -torch.mean(current_log_probs * advantages.detach())
+
+            # compute the critic loss
+            critic_loss = torch.nn.functional.mse_loss(state_values, returns.detach())
+
+            # update the actor and critic networks
+            local_actor.zero_grad()
+            actor_loss.backward()
+
+            local_critic.zero_grad()
+            critic_loss.backward()
+
+            with lock:
+                for global_param, local_param in zip(
+                    self.actor.parameters(), local_actor.parameters()
+                ):
+                    if global_param.grad is None:
+                        global_param.grad = local_param.grad.clone()
+                    else:
+                        global_param.grad += local_param.grad
+                for global_param, local_param in zip(
+                    self.critic.parameters(), local_critic.parameters()
+                ):
+                    if global_param.grad is None:
+                        global_param.grad = local_param.grad.clone()
+                    else:
+                        global_param.grad += local_param.grad
+
+                # update global networks
+                self.actor_optimizer.step()
+                self.critic_optimizer.step()
+
+                # reset gradients
+                self.actor_optimizer.zero_grad()
+                self.critic_optimizer.zero_grad()
 
             t += self.update_frequency
 
