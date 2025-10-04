@@ -23,7 +23,7 @@ class PPO:
         entropy_coeff: float = 0.01,
     ) -> None:
         """
-        Initialize the Efficient PPO agent.
+        Initialize the PPO agent.
 
         Args:
             env (gym.Env): the gymnasium environment
@@ -86,24 +86,32 @@ class PPO:
             if t % 20480 == 0:
                 print(f"Training step {t}")
 
+            # clear the rollout buffer
             self.rollout_buffer.clear()
+            # collect data
             for step in range(self.rollout_steps):
+                # convert the current state to a tensor for inference
                 state_tensor = torch.tensor(state, dtype=torch.float32).unsqueeze(0)
 
+                # select an action
                 with torch.no_grad():
                     action_logits = self.policy_net(state_tensor)
                     dist = torch.distributions.Categorical(logits=action_logits)
                     action = dist.sample()
 
+                # take a step in the environment
                 next_state, reward, done, truncated, _ = self.env.step(action.item())
 
+                # update the rollout buffer
                 self.rollout_buffer.append((state, action.item(), reward, done))
 
                 state = next_state
                 if done or truncated:
                     state, _ = self.env.reset()
 
+            # update the policy and value networks using the collected rollout data
             self._update_params(state)
+            # increment the training steps
             t += self.rollout_steps
 
     def _update_params(self, state) -> None:
@@ -113,16 +121,18 @@ class PPO:
         Args:
             state: The most recent state of the environment (for creating the next state values)
         """
+        # separate the batch into states, actions, rewards, and dones
         batch = self.rollout_buffer.buffer
-
         (states, actions, rewards, dones) = zip(*batch)
 
+        # conver the experiences to tensors
         states = torch.tensor(np.array(states), dtype=torch.float32)
         actions = torch.tensor(actions, dtype=torch.long)
         rewards = torch.tensor(rewards, dtype=torch.float32).unsqueeze(-1)
         dones = torch.tensor(dones, dtype=torch.float32).unsqueeze(-1)
 
         with torch.no_grad():
+            # get state values from the critic for advantage calculation
             all_state_values = self.value_net(
                 torch.cat(
                     [states, torch.tensor(state, dtype=torch.float32).unsqueeze(0)],
@@ -142,31 +152,37 @@ class PPO:
                 self.gae_lambda,
             )
 
+            # calculate the log_probabilities of the experienced states from the policy
             current_logits = self.policy_net(states)
             current_dist = torch.distributions.Categorical(logits=current_logits)
             current_log_probs = current_dist.log_prob(actions)
 
         dataset_size = self.rollout_steps
 
+        # update the policy network
         for _ in range(self.epochs):
+            # shuffle the indices of experiences
             indices = torch.randperm(dataset_size)
 
             for start_idx in range(0, dataset_size, self.batch_size):
                 end_idx = min(start_idx + self.batch_size, dataset_size)
                 batch_indices = indices[start_idx:end_idx]
 
+                # get a batch of states, actions, advantages, returns, and log probs
                 batch_states = states[batch_indices]
                 batch_actions = actions[batch_indices]
                 batch_advantages = advantages[batch_indices]
                 batch_returns = returns[batch_indices]
                 batch_log_probs = current_log_probs[batch_indices]
 
-                # compute the ratio of the new policy to the old policy
+                # find the log probs for the current batch
                 new_logits = self.policy_net(batch_states)
                 new_dist = torch.distributions.Categorical(logits=new_logits)
                 new_log_probs = new_dist.log_prob(batch_actions)
+                # calculate the entropy for the current batch (for loss regularization)
                 entropy = new_dist.entropy().mean()
 
+                # compute the ratio of the new policy to the old policy
                 ratio = torch.exp(new_log_probs - batch_log_probs)
 
                 # compute the policy loss
@@ -182,12 +198,14 @@ class PPO:
                     new_values, batch_returns.detach()
                 )
 
+                # calculate the total loss
                 total_loss = (
                     policy_loss
                     + self.value_coeff * value_loss
                     - self.entropy_coeff * entropy
                 )
 
+                # update the networks
                 self.optimizer.zero_grad()
                 total_loss.backward()
                 self.optimizer.step()
