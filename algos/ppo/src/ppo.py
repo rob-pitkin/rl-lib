@@ -1,360 +1,223 @@
 import torch
 import gymnasium as gym
+from torch.utils import data
 from algos.utils import calculate_advantages_and_returns, ReplayBuffer
+from network import PPONetwork, ValueNetwork
+import numpy as np
 
 
 class PPO:
-    """
-    PPO agent class
-
-    Attributes:
-        policy_net (PPONetwork): the policy network used for picking actions (actor)
-        value_net (ValueNetwork): the value network used for critiquing actions (critic)
-        policy_optimizer (torch.optim): the actor optimizer used for SGD
-        value_optimizer (torch.optim): the critic optimizer used for SGD
-        buffer (ReplayBuffer): the replay buffer to store experiences
-        epsilon (float): the epsilon to use for gradient clipping in the PPO update, default 0.2
-        gamma (float): the discount factor hyperparameter of the agent
-        lam (float): the lambda hyperparameter for GAE, default 0.95
-        epochs (int): the number of epochs to use for each iteration of PPO update, default 10
-        batch_size (int): the batch size for the replay buffer to use for the PPO update, default 64
-        env_id (str): the gymnasium environment id
-        env (gym.env): the gymnasium environment
-        policy_lr (float): the learning rate of the policy_network, default 0.001
-        value_lr (float): the learning rate of the value_network, default 0.001
-
-    """
-
     def __init__(
         self,
-        env_id,
-        buffer_capacity,
-        policy_net=None,
-        value_net=None,
-        cnn_net=None,
-        lam=0.95,
-        epsilon=0.2,
-        gamma=0.99,
-        epochs=10,
-        policy_lr=0.001,
-        value_lr=0.001,
-    ):
-        """
-        Args:
-            policy_net (PPONetwork): the policy network used for picking actions (actor)
-            value_net (ValueNetwork): the value network used for critiquing actions (critic)
-            buffer_capacity (int): the capacity of the replay buffer
-            env_id (str): the gymnasium environment id to use for training and eval
-            lam (float): the lambda hyperparameter for GAE
-            epsilon (float): the epsilon to use for gradient clipping in the PPO update, default 0.2
-            gamma (float): the discount factor hyperparameter of the agent, default 0.99
-            epochs (int): the number of epochs to use for each iteration of PPO update, default 10
-            policy_lr (float): the learning rate of the policy_network, default 0.001
-            value_lr (float): the learning rate of the value_network, default 0.001
-
-        """
-        self.policy_net, self.value_net, self.cnn_net = None, None, None
-        if cnn_net:
-            self.cnn_net = cnn_net
-        else:
-            self.policy_net = policy_net
-            self.value_net = value_net
-        self.buffer = ReplayBuffer(buffer_capacity)
-        self.epsilon = epsilon
-        self.gamma = gamma
-        self.lam = lam
-        self.epochs = epochs
-        self.env_id = env_id
-        self.env = (
-            gym.make(self.env_id)
-            if not cnn_net
-            else gym.make(self.env_id, continuous=False)
-        )
-        self.policy_lr = policy_lr
-        self.value_lr = value_lr
-        self.policy_optimizer, self.value_optimizer, self.cnn_optimizer = (
-            None,
-            None,
-            None,
-        )
-        if self.cnn_net:
-            self.cnn_optimizer = torch.optim.Adam(
-                self.cnn_net.parameters(), lr=self.policy_lr
-            )
-        else:
-            self.policy_optimizer = torch.optim.Adam(
-                self.policy_net.parameters(), lr=self.policy_lr
-            )
-            self.value_optimizer = torch.optim.Adam(
-                self.value_net.parameters(), lr=self.value_lr
-            )
-
-    def update_params_2d(
-        self,
-        states: torch.tensor,
-        actions: torch.tensor,
-        prev_log_probs: torch.tensor,
-        advantages: torch.tensor,
-        returns: torch.tensor,
+        env: gym.Env,
+        net_arch: dict[str, list[int]],
+        rollout_steps: int = 2048,
+        lr: float = 3e-4,
+        gamma: float = 0.99,
+        gae_lambda: float = 0.95,
         epsilon: float = 0.2,
-        epochs: float = 10,
-        value_coeff: float = 0.5,
-    ) -> None:
-        """ """
-        # state shape assertions
-        torch._assert(
-            states.dim() == 4,
-            message=f"Expected states to be 4D tensors, got {states.shape}",
-        )
-        torch._assert(
-            states.shape[3] == 3,
-            message=f"Expected 3 input channels for each state, got {states.shape[1]}",
-        )
-
-        # action shape assertions
-        torch._assert(
-            actions.dim() == 2,
-            f"Expected actions to be 2D tensors, got {actions.shape}",
-        )
-
-        for _ in range(epochs):
-            # Compute a forward pass of the states, get the action_probs and state values
-            # action_logits will be (N, action_space), state_values will be (N, 1)
-            action_logits, state_values = self.cnn_net(states)
-            # Compute the log probs of each taken action
-            # gather is an indexing wrapper, takes the dim to "gather on" and the indices to select
-            dist = torch.distributions.Categorical(logits=action_logits)
-            new_log_probs = dist.log_prob(actions)
-            # use log rules: log(a) - log(b) = log(a/b), exp(log(a/b)) = a/b
-            prob_ratio = torch.exp(new_log_probs - prev_log_probs.detach())
-            # compute the PPO objective fn
-            actor_loss = -torch.min(
-                prob_ratio * advantages.detach(),
-                torch.clip(prob_ratio, 1.0 - epsilon, 1.0 + epsilon)
-                * advantages.detach(),
-            ).mean()  # Take mean across batch to get scalar loss
-
-            # Compute the value loss
-            critic_loss = torch.nn.functional.mse_loss(state_values, returns.detach())
-
-            # backprop the loss
-            self.cnn_optimizer.zero_grad()
-            total_loss = actor_loss + value_coeff * critic_loss
-            total_loss.backward()
-            self.cnn_optimizer.step()
-
-    def update_params_1d(
-        self,
-        states: torch.tensor,
-        actions: torch.tensor,
-        prev_log_probs: torch.tensor,
-        advantages: torch.tensor,
-        returns: torch.tensor,
-        epsilon: float = 0.2,
-        epochs: float = 10,
-    ) -> None:
-        """ """
-        for _ in range(epochs):
-            # Compute the log probs of each taken action
-            action_logits = self.policy_net(states)
-            dist = torch.distributions.Categorical(logits=action_logits)
-            new_log_probs = dist.log_prob(actions)
-            # use log rules: log(a) - log(b) = log(a/b), exp(log(a/b)) = a/b
-            prob_ratio = torch.exp(new_log_probs - prev_log_probs)
-            # compute the PPO objective fn
-            actor_loss = -torch.min(
-                prob_ratio * advantages.detach(),
-                torch.clip(prob_ratio, 1.0 - epsilon, 1.0 + epsilon)
-                * advantages.detach(),
-            ).mean()  # Take mean across batch to get scalar loss
-
-            # Compute the state values and value loss
-            state_values = self.value_net(states)
-            critic_loss = torch.nn.functional.mse_loss(state_values, returns)
-
-            # backprop the actor update
-            self.policy_optimizer.zero_grad()
-            actor_loss.backward()
-            self.policy_optimizer.step()
-
-            # backprop the critic update
-            self.value_optimizer.zero_grad()
-            critic_loss.backward()
-            self.value_optimizer.step()
-
-    def train(
-        self,
-        policy_save_path: str = "",
-        value_save_path: str = "",
-        cnn_save_path: str = "",
-        num_episodes: int = 100,
+        epochs: int = 4,
         batch_size: int = 64,
-    ):
-        for i in range(num_episodes):
-            if i % 100 == 0:
-                print(f"Episode {i} of {num_episodes}")
-            if self.cnn_net:
-                self.collect_rollout_2d()
-            else:
-                self.collect_rollout_1d()
-            if self.buffer.get_size() >= self.buffer.capacity:
-                batch = self.buffer.buffer
-                # zip batch into individual parts
-                (
-                    states,
-                    actions,
-                    rewards,
-                    dones,
-                    log_probs,
-                    state_values,
-                    next_state_values,
-                ) = zip(*batch)
-                # convert to tensors
-                states = torch.stack([s.squeeze(0) for s in states])
-                actions = torch.stack(actions)
-                rewards = torch.stack(rewards)
-                dones = torch.stack(dones)
-                log_probs = torch.stack(log_probs)
-                state_values = torch.stack(state_values)
-                next_state_values = torch.stack(next_state_values)
-                advantages, returns = calculate_advantages_and_returns(
-                    rewards,
-                    state_values.detach(),
-                    next_state_values.detach(),
-                    dones,
-                    self.gamma,
-                    self.lam,
-                )
-
-                # perform PPO update
-                if self.cnn_net:
-                    self.update_params_2d(
-                        states,
-                        actions,
-                        log_probs.detach(),
-                        advantages,
-                        returns,
-                        self.epsilon,
-                        self.epochs,
-                    )
-                else:
-                    self.update_params_1d(
-                        states,
-                        actions,
-                        log_probs.detach(),
-                        advantages,
-                        returns,
-                        self.epsilon,
-                        self.epochs,
-                    )
-                self.buffer.clear()
-        if self.cnn_net:
-            self.save_model_2d(cnn_save_path)
-        else:
-            self.save_model(policy_save_path, value_save_path)
-
-    def collect_rollout_1d(self):
-        with torch.no_grad():
-            obs, _ = self.env.reset()
-            state = torch.tensor(obs).unsqueeze(0)
-            episode_done = False
-            while not episode_done:
-                # Pick the action from the policy
-                action_logits = self.policy_net(state)
-                dist = torch.distributions.Categorical(logits=action_logits)
-                action = dist.sample()
-
-                # get the log prob of the action
-                log_prob = dist.log_prob(action)
-
-                # get the value of the state
-                state_value = self.value_net(state).squeeze(0)
-
-                # take the next step in the env
-                next_state, reward, terminated, truncated, _ = self.env.step(
-                    action.item()
-                )
-                next_state = torch.tensor(next_state).unsqueeze(0)
-                episode_done = terminated or truncated
-                next_state_value = (
-                    self.value_net(next_state).squeeze(0)
-                    if not episode_done
-                    else torch.tensor([0.0], dtype=torch.float32)
-                )
-
-                experience = (
-                    state,
-                    action,
-                    torch.tensor(reward, dtype=torch.float32).unsqueeze(0),
-                    torch.tensor(episode_done, dtype=torch.float32).unsqueeze(0),
-                    log_prob,
-                    state_value,
-                    next_state_value,
-                )
-                self.buffer.append(experience)
-                state = next_state
-
-    def collect_rollout_2d(self):
-        with torch.no_grad():
-            obs, _ = self.env.reset()
-            state = torch.tensor(obs, dtype=torch.float32).unsqueeze(0)
-            episode_done = False
-            while not episode_done:
-                # Pick the action from the policy
-                action_logits, state_value = self.cnn_net(state)
-                dist = torch.distributions.Categorical(logits=action_logits)
-                action = dist.sample()
-
-                # get the log prob of the action
-                log_prob = dist.log_prob(action)
-
-                # take the next step in the env
-                next_state, reward, terminated, truncated, _ = self.env.step(
-                    action.item()
-                )
-                next_state = torch.tensor(next_state, dtype=torch.float32).unsqueeze(0)
-                episode_done = terminated or truncated
-                next_state_value = (
-                    self.cnn_net(next_state)[1].squeeze(0)
-                    if not episode_done
-                    else torch.tensor([0.0], dtype=torch.float32)
-                )
-
-                experience = (
-                    state,
-                    action,
-                    torch.tensor(reward, dtype=torch.float32).unsqueeze(0),
-                    torch.tensor(episode_done, dtype=torch.float32).unsqueeze(0),
-                    log_prob,
-                    state_value.squeeze(0),
-                    next_state_value,
-                )
-                self.buffer.append(experience)
-                state = next_state
-
-    def load_model(self, policy_filepath: str, value_filepath: str) -> None:
+        seed: int | None = None,
+        value_coeff: float = 0.5,
+        entropy_coeff: float = 0.01,
+    ) -> None:
         """
-        Loads the policy and value networks from filepaths
+        Initialize the Efficient PPO agent.
 
         Args:
-            policy_filepath (str): filepath of the policy_network to load from
-            value_filepath (str): filepath of the value_network to load from
+            env (gym.Env): the gymnasium environment
+            net_arch (dict[str, list[int]]): the network architecture for the policy and value networks
+            rollout_steps (int): the number of steps to rollout for each iteration, default 2048
+            lr (float): the learning rate for the policy and value networks, default 3e-4
+            gamma (float): the discount factor hyperparameter of the agent, default 0.99
+            gae_lambda (float): the lambda hyperparameter for GAE, default 0.95
+            epsilon (float): the epsilon to use for gradient clipping in the PPO update, default 0.2
+            epochs (int): the number of epochs to use for each iteration of PPO update, default 4
+            batch_size (int): the batch size for the replay buffer to use for the PPO update, default 64
+            seed (int | None): the seed to use for the random number generator, default None
+            value_coeff (float): the coefficient for the value loss, default 0.5
+            entropy_coeff (float): the coefficient for the entropy loss, default 0.01
+        """
+        if seed is not None:
+            torch.manual_seed(seed)
+            np.random.seed(seed)
+
+        self.env = env
+        self.net_arch = net_arch
+        self.lr = lr
+        self.gamma = gamma
+        self.gae_lambda = gae_lambda
+        self.epsilon = epsilon
+        self.epochs = epochs
+        self.batch_size = batch_size
+        self.rollout_steps = rollout_steps
+        self.value_coeff = value_coeff
+        self.entropy_coeff = entropy_coeff
+
+        self.observation_dim = gym.spaces.utils.flatdim(env.observation_space)
+        self.action_dim = gym.spaces.utils.flatdim(env.action_space)
+
+        self.policy_net = PPONetwork(
+            self.observation_dim, self.action_dim, hidden_dims=self.net_arch["policy"]
+        )
+        self.value_net = ValueNetwork(
+            self.observation_dim, hidden_dims=self.net_arch["value"]
+        )
+
+        self.optimizer = torch.optim.Adam(
+            list(self.policy_net.parameters()) + list(self.value_net.parameters()),
+            lr=self.lr,
+        )
+
+        self.rollout_buffer = ReplayBuffer(self.rollout_steps)
+
+    def train(self, num_steps: int) -> None:
+        """
+        Train the PPO agent for a specified number of steps.
+
+        Args:
+            num_steps: The total number of training steps to perform.
+        """
+        t = 0
+        state, _ = self.env.reset()
+
+        while t < num_steps:
+            if t % 20480 == 0:
+                print(f"Training step {t}")
+
+            self.rollout_buffer.clear()
+            for step in range(self.rollout_steps):
+                state_tensor = torch.tensor(state, dtype=torch.float32).unsqueeze(0)
+
+                with torch.no_grad():
+                    action_logits = self.policy_net(state_tensor)
+                    dist = torch.distributions.Categorical(logits=action_logits)
+                    action = dist.sample()
+
+                next_state, reward, done, truncated, _ = self.env.step(action.item())
+
+                self.rollout_buffer.append((state, action.item(), reward, done))
+
+                state = next_state
+                if done or truncated:
+                    state, _ = self.env.reset()
+
+            self._update_params(state)
+            t += self.rollout_steps
+
+    def _update_params(self, state) -> None:
+        """
+        Update the policy and value networks using the collected rollout data.
+
+        Args:
+            state: The most recent state of the environment (for creating the next state values)
+        """
+        batch = self.rollout_buffer.buffer
+
+        (states, actions, rewards, dones) = zip(*batch)
+
+        states = torch.tensor(np.array(states), dtype=torch.float32)
+        actions = torch.tensor(actions, dtype=torch.long)
+        rewards = torch.tensor(rewards, dtype=torch.float32).unsqueeze(-1)
+        dones = torch.tensor(dones, dtype=torch.float32).unsqueeze(-1)
+
+        with torch.no_grad():
+            all_state_values = self.value_net(
+                torch.cat(
+                    [states, torch.tensor(state, dtype=torch.float32).unsqueeze(0)],
+                    dim=0,
+                )
+            )
+            state_values = all_state_values[:-1]
+            next_state_values = all_state_values[1:]
+
+            # compute advantages and returns for updates
+            advantages, returns = calculate_advantages_and_returns(
+                rewards,
+                state_values.detach(),
+                next_state_values.detach(),
+                dones,
+                self.gamma,
+                self.gae_lambda,
+            )
+
+            current_logits = self.policy_net(states)
+            current_dist = torch.distributions.Categorical(logits=current_logits)
+            current_log_probs = current_dist.log_prob(actions)
+
+        dataset_size = self.rollout_steps
+
+        for _ in range(self.epochs):
+            indices = torch.randperm(dataset_size)
+
+            for start_idx in range(0, dataset_size, self.batch_size):
+                end_idx = min(start_idx + self.batch_size, dataset_size)
+                batch_indices = indices[start_idx:end_idx]
+
+                batch_states = states[batch_indices]
+                batch_actions = actions[batch_indices]
+                batch_advantages = advantages[batch_indices]
+                batch_returns = returns[batch_indices]
+                batch_log_probs = current_log_probs[batch_indices]
+
+                # compute the ratio of the new policy to the old policy
+                new_logits = self.policy_net(batch_states)
+                new_dist = torch.distributions.Categorical(logits=new_logits)
+                new_log_probs = new_dist.log_prob(batch_actions)
+                entropy = new_dist.entropy().mean()
+
+                ratio = torch.exp(new_log_probs - batch_log_probs)
+
+                # compute the policy loss
+                policy_loss = -torch.min(
+                    ratio * batch_advantages.detach(),
+                    torch.clip(ratio, 1.0 - self.epsilon, 1.0 + self.epsilon)
+                    * batch_advantages.detach(),
+                ).mean()  # Take mean across batch to get scalar loss
+
+                # compute the value loss
+                new_values = self.value_net(batch_states)
+                value_loss = torch.nn.functional.mse_loss(
+                    new_values, batch_returns.detach()
+                )
+
+                total_loss = (
+                    policy_loss
+                    + self.value_coeff * value_loss
+                    - self.entropy_coeff * entropy
+                )
+
+                self.optimizer.zero_grad()
+                total_loss.backward()
+                self.optimizer.step()
+
+    def eval_model(self, num_episodes: int) -> None:
+        """
+        Evaluates the model with human rendered episodes
+
+        Args:
+            num_episodes: number of evaluation episodes
         Returns:
             None
         """
-        self.policy_net = torch.load(policy_filepath, weights_only=False)
-        self.value_net = torch.load(value_filepath, weights_only=False)
-
-    def load_model_2d(self, cnn_filepath: str) -> None:
-        """
-        Loads the cnn from a filepath
-
-        Args:
-            cnn_filepath (str): filepath of the cnn to load from
-        Returns:
-            None
-        """
-        self.cnn_net = torch.load(cnn_filepath, weights_only=False)
+        self.policy_net.eval()
+        eval_env = gym.make(self.env.spec.id, render_mode="human")
+        avg_reward = 0
+        for _ in range(num_episodes):
+            reward = 0
+            obs, _ = eval_env.reset()
+            done = False
+            while not done:
+                action_logits = self.policy_net(torch.FloatTensor(obs).unsqueeze(0))
+                action = torch.argmax(action_logits, dim=-1).item()
+                obs, r, terminated, truncated, _ = eval_env.step(action)
+                reward += r
+                done = terminated or truncated
+            avg_reward += reward
+        eval_env.close()
+        print(f"Average Reward: {avg_reward / num_episodes}")
+        self.policy_net.train()
 
     def save_model(self, policy_filepath: str, value_filepath: str) -> None:
         """
@@ -369,45 +232,15 @@ class PPO:
         torch.save(self.policy_net, policy_filepath)
         torch.save(self.value_net, value_filepath)
 
-    def save_model_2d(self, cnn_filepath: str) -> None:
+    def load_model(self, policy_filepath: str, value_filepath: str) -> None:
         """
-        Saves the cnn to a filepath
+        Loads the policy and value networks from filepaths
 
         Args:
-            cnn_filepath (str): path to save the cnn to
+            policy_filepath (str): filepath of the policy_network to load from
+            value_filepath (str): filepath of the value_network to load from
         Returns:
             None
         """
-        torch.save(self.cnn_net, cnn_filepath)
-
-    def eval_model(self, num_episodes: int) -> None:
-        """
-        Evaluates the model with human rendered episodes
-
-        Args:
-            num_episodes: number of evaluation episodes
-        Returns:
-            None
-        """
-        if self.cnn_net:
-            self.cnn_net.eval()
-        else:
-            self.policy_net.eval()
-        eval_env = gym.make(self.env_id, render_mode="human")
-        avg_reward = 0
-        for _ in range(num_episodes):
-            reward = 0
-            obs, _ = eval_env.reset()
-            done = False
-            while not done:
-                if self.cnn_net:
-                    action_logits, _ = self.cnn_net(torch.FloatTensor(obs).unsqueeze(0))
-                else:
-                    action_logits = self.policy_net(torch.FloatTensor(obs).unsqueeze(0))
-                action = torch.argmax(action_logits, dim=-1).item()
-                obs, r, terminated, truncated, _ = eval_env.step(action)
-                reward += r
-                done = terminated or truncated
-            avg_reward += reward
-        eval_env.close()
-        print(f"Average Reward: {avg_reward / num_episodes}")
+        self.policy_net = torch.load(policy_filepath, weights_only=False)
+        self.value_net = torch.load(value_filepath, weights_only=False)

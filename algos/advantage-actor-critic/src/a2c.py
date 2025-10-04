@@ -4,7 +4,12 @@ from agent import AdvantageActorCriticAgent
 
 def main():
     env = gymnasium.make("LunarLander-v3")
-    agent = AdvantageActorCriticAgent(env, net_arch={}, update_frequency=256)
+    agent = AdvantageActorCriticAgent(
+        env,
+        net_arch={"actor": [128, 128], "critic": [128, 128]},
+        update_frequency=128,
+        lr=3e-4,
+    )
     agent.train(
         2000000,
     )
